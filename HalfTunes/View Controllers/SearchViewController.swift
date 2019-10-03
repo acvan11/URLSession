@@ -54,6 +54,11 @@ class SearchViewController: UIViewController {
   // MARK: - Variables And Properties
   //
   // TODO 6
+  lazy var downloadsSession: URLSession = {
+    let configuration = URLSessionConfiguration.background(withIdentifier: "com.raywenderlinch.HalfTunes.bgSession")
+    
+    return URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+  }()
   
   var searchResults: [Track] = []
   
@@ -99,6 +104,7 @@ class SearchViewController: UIViewController {
     tableView.tableFooterView = UIView()
     
     // TODO 7
+    downloadService.downloadsSession = downloadsSession
   }
   
 }
@@ -152,7 +158,8 @@ extension SearchViewController: UITableViewDataSource {
     
     let track = searchResults[indexPath.row]
     // TODO 13
-    cell.configure(track: track, downloaded: track.downloaded)
+    cell.configure(track: track, downloaded: track.downloaded,
+                   download: downloadService.activeDownloads[track.previewURL])
     
     return cell
   }
@@ -221,5 +228,80 @@ extension SearchViewController: TrackCellDelegate {
 }
 
 // TODO 19
+extension SearchViewController: URLSessionDelegate {
+  func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+    DispatchQueue.main.async {
+      if let appDelegate = UIApplication.shared.delegate as? AppDelegate,
+        let completionHandler = appDelegate.backgroundSessionCompletionHandler {
+        appDelegate.backgroundSessionCompletionHandler = nil
+        
+        completionHandler()
+      }
+    }
+  }
+}
 
 // TODO 5
+extension SearchViewController: URLSessionDownloadDelegate {
+  // Display the progress of downloading
+  func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+    
+    //extract the URL of the provided downloadTask and use it to find the matching Download in your dictionary of active downloads
+    guard
+      let url = downloadTask.originalRequest?.url,
+      let download = downloadService.activeDownloads[url]
+      else {
+        return
+    }
+    
+    //calculate the progress as the ratio of these two values and save the result in Download. The track
+    // cell will use this value to update the progress view
+    download.progress = Float(totalBytesWritten) / Float(totalBytesExpectedToWrite)
+    
+    // ByteCountFormatter will take a byte value and generate a human-readable string showing the total
+    // download file size. You will see this string to show the size of the download alongside the percentage complete
+    let totalSize = ByteCountFormatter.string(fromByteCount: totalBytesExpectedToWrite, countStyle: .file)
+    
+    // displaying the track and call the cell's method to update its progress view and progress label with values derived from the previous steps
+    DispatchQueue.main.async {
+      if let trackCell = self.tableView.cellForRow(at: IndexPath(row: download.track.index, section: 0)) as? TrackCell {
+        trackCell.updateDisplay(progress: download.progress, totalSize: totalSize)
+      }
+    }
+  }
+  
+  func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+    // Extract the original request URL from the task, look up the corresponding Download in your active
+    // downloads and remove it from that dictionary.
+    guard let sourceURL = downloadTask.originalRequest?.url else {
+      return
+    }
+    
+    let download = downloadService.activeDownloads[sourceURL]
+    downloadService.activeDownloads[sourceURL] = nil
+    
+    //pass the URL to localFilePath(for:), which generates a permanent local file path to save to by appending the
+    // lastPathComponent of the URL (the file name and extension of the file) to the path of the app's Documents directory
+    let destinationURL = localFilePath(for: sourceURL)
+    print(destinationURL)
+    
+    // Using fileManager, you move the downloaded file from its temporary file location to the desired destination file path,
+    //first clearing out any item at that location before you start the copy task. You also set the download track's downloaded property to true
+    let fileManager = FileManager.default
+    try? fileManager.removeItem(at: destinationURL)
+    
+    do {
+      try fileManager.copyItem(at: location, to: destinationURL)
+      download?.track.downloaded = true
+    } catch let error {
+      print("Could not copy file to disk: \(error.localizedDescription)")
+    }
+    
+    // use the download track's index property to reload the corresponding cell
+    if let index = download?.track.index {
+      DispatchQueue.main.async { [weak self] in
+        self?.tableView.reloadRows(at: [IndexPath(row: index, section: 0)], with: .none)
+      }
+    }
+  }
+}

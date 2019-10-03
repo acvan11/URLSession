@@ -42,6 +42,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
   // MARK: - Variables And Properties
   //
   // TODO 17
+  var backgroundSessionCompletionHandler: (() -> Void)?
   var window: UIWindow?
   
   //
@@ -54,6 +55,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
   }
   
   // TODO 18
+  func application(
+    _ application: UIApplication,
+    handleEventsForBackgroundURLSession
+      handleEventsForBackgroundURLSessionidentifier: String,
+    completionHandler: @escaping () -> Void) {
+      backgroundSessionCompletionHandler = completionHandler
+  }
   
   //
   // MARK - Private Methods
